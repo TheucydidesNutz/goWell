@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>goWell — OSINT Dashboard</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0d0d0d;
+    --bg2:      #111417;
+    --bg3:      #161b22;
+    --border:   #2a2f3a;
+    --text:     #c9d1d9;
+    --dim:      #484f58;
+    --cyan:     #58a6ff;
+    --green:    #3fb950;
+    --red:      #f85149;
+    --orange:   #e3b341;
+    --yellow:   #d29922;
+    --magenta:  #bc8cff;
+    --white:    #f0f6fc;
+    --blue:     #388bfd;
+    --font:     'Cascadia Code','Fira Code','Consolas',monospace;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 12.5px;
+    height: 100%;
+  }
+
+  .page { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  header {
+    background: #1a0000;
+    border-bottom: 2px solid var(--red);
+    padding: 7px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  header h1 { color: var(--red); font-size: 14px; letter-spacing: 2px; }
+  .header-right { font-size: 11px; color: var(--dim); text-align: right; line-height: 1.7; }
+  .online  { color: var(--green); }
+  .offline { color: var(--red);   }
+  .warn    { color: var(--orange);}
+
+  /* ── Main grid ───────────────────────────────────────────── */
+  .grid {
+    display: grid;
+    grid-template-columns: 6fr 4fr;
+    grid-template-rows: auto auto auto;
+    gap: 6px;
+    padding: 6px;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* Left column spans all rows */
+  .left-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+    grid-row: 1 / 4;
+  }
+
+  /* Right column: raw traffic + keyword alerts */
+  .right-col {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    overflow: hidden;
+    grid-row: 1 / 4;
+  }
+
+  /* ── Panel ───────────────────────────────────────────────── */
+  .panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-header {
+    padding: 5px 12px;
+    font-size: 10.5px;
+    font-weight: bold;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .ph-magenta { color: var(--magenta); background: #15101f; }
+  .ph-blue    { color: var(--blue);    background: #0d1520; }
+  .ph-yellow  { color: var(--yellow);  background: #191300; }
+  .ph-cyan    { color: var(--cyan);    background: #0d1a1a; }
+  .ph-green   { color: var(--green);   background: #0d1a0d; }
+
+  .panel-body {
+    overflow-y: auto;
+    overflow-x: auto;
+    flex: 1;
+  }
+
+  /* flex-grow weights */
+  .panel-fuel     { flex: 2; }
+  .panel-airports { flex: 1; min-height: 160px; }
+  .panel-liveuamap{ flex: 3; }
+  .panel-raw      { flex: 3; }
+  .panel-keywords { flex: 2; }
+
+  /* ── Tables ──────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+
+  th {
+    position: sticky; top: 0;
+    background: var(--bg3);
+    color: var(--dim);
+    font-weight: normal;
+    padding: 4px 10px;
+    text-align: right;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    z-index: 1;
+  }
+  th:first-child { text-align: left; }
+
+  td {
+    padding: 4px 10px;
+    text-align: right;
+    border-bottom: 1px solid #1a1f2a;
+    white-space: nowrap;
+  }
+  td:first-child { text-align: left; }
+
+  tr:hover td { background: #1c2130; }
+
+  /* ── Colour helpers ──────────────────────────────────────── */
+  .c-red    { color: var(--red);     }
+  .c-green  { color: var(--green);   }
+  .c-orange { color: var(--orange);  }
+  .c-cyan   { color: var(--cyan);    }
+  .c-yellow { color: var(--yellow);  }
+  .c-mag    { color: var(--magenta); }
+  .c-white  { color: var(--white);   }
+  .c-dim    { color: var(--dim);     }
+  .c-blue   { color: var(--blue);    }
+  .bold     { font-weight: bold;     }
+
+  /* ── Category separator ──────────────────────────────────── */
+  .cat-sep td { border-bottom: 1px solid #252b38; }
+
+  /* ── Log entries (raw + keyword panels) ─────────────────── */
+  .log-list {
+    padding: 6px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .log-entry {
+    font-size: 11px;
+    line-height: 1.5;
+    padding: 3px 6px;
+    border-radius: 2px;
+    border-left: 2px solid var(--border);
+    color: var(--text);
+    word-break: break-word;
+  }
+
+  .log-entry.urgent   { border-color: var(--red);     background: #1a0808; color: var(--white); }
+  .log-entry.tactical { border-color: var(--red);     background: #1a0808; color: var(--white); }
+  .log-entry.military { border-color: var(--orange);  background: #1a1108; }
+  .log-entry.logistics{ border-color: var(--yellow);  background: #191308; }
+  .log-entry.civil    { border-color: var(--cyan);    background: #081218; }
+  .log-entry.geo      { border-color: var(--magenta); background: #120a1a; }
+  .log-entry.raw      { border-color: var(--blue);    background: #08101a; font-size: 10.5px; }
+
+  .log-time { color: var(--dim); font-size: 10px; margin-right: 6px; }
+  .log-cat  { font-weight: bold; font-size: 10px; margin-right: 6px; }
+  .log-src  { color: var(--dim); font-size: 10px; }
+
+  /* ── LiveUAMap event rows ────────────────────────────────── */
+  .ev-row {
+    padding: 5px 10px;
+    border-bottom: 1px solid #1a1f2a;
+    display: grid;
+    grid-template-columns: 48px 1fr 120px 80px;
+    gap: 8px;
+    font-size: 11px;
+  }
+  .ev-row:hover { background: #1c2130; }
+  .ev-time  { color: var(--white); font-size: 10.5px; }
+  .ev-text  { color: var(--text); }
+  .ev-loc   { color: var(--yellow); font-size: 10.5px; }
+  .ev-src   { color: var(--magenta); font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ── Footer ──────────────────────────────────────────────── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 4px 12px;
+    font-size: 10.5px;
+    color: var(--dim);
+    display: flex;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+  }
+  .badge-green  { background: #0f3020; color: var(--green); }
+  .badge-red    { background: #3a0808; color: var(--red);   }
+  .badge-orange { background: #2a1a00; color: var(--orange);}
+  .badge-dim    { background: #1a1f2a; color: var(--dim);   }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Header ────────────────────────────────────────────── -->
+  <header>
+    <h1>⬡ THIS IS GOING TO GO REALLY REALLY WELL</h1>
+    <div class="header-right">
+      <span id="hdr-internet">NET: —</span> &nbsp;·&nbsp;
+      <span id="hdr-tg">TG: —</span> &nbsp;·&nbsp;
+      <span id="hdr-adsb">ADSB: —</span>
+      <br>
+      Tehran: <span id="hdr-tehran" class="c-orange">—</span> &nbsp;·&nbsp;
+      Updated: <span id="hdr-updated" class="c-dim">—</span>
+    </div>
+  </header>
+
+  <!-- ── Grid ──────────────────────────────────────────────── -->
+  <div class="grid">
+
+    <!-- LEFT COLUMN -->
+    <div class="left-col">
+
+      <!-- Fuel Prices -->
+      <div class="panel panel-fuel">
+        <div class="panel-header ph-magenta">
+          ▸ Fuel Price Intelligence
+          <span id="fpc-sources" style="font-size:10px;font-weight:normal;color:var(--dim)"></span>
+        </div>
+        <div class="panel-body">
+          <table id="fpc-table">
+            <thead>
+              <tr>
+                <th style="text-align:left">CAT</th>
+                <th style="text-align:left">COMMODITY</th>
+                <th>SPOT</th>
+                <th>UNIT</th>
+                <th>J1–F25 AVG</th>
+                <th>VS AVG</th>
+                <th>AS OF</th>
+              </tr>
+            </thead>
+            <tbody id="fpc-tbody">
+              <tr><td colspan="7" class="c-dim" style="text-align:center;padding:20px">Initialising fuel data…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Airports -->
+      <div class="panel panel-airports">
+        <div class="panel-header ph-blue">
+          ▸ Regional Airspace Activity (ADSB.fi)
+          <span id="adsb-badge"></span>
+        </div>
+        <div class="panel-body">
+          <table id="airports-table">
+            <thead>
+              <tr>
+                <th style="text-align:left">Country / Airport</th>
+                <th>Ground</th>
+                <th>Outbound</th>
+                <th>Inbound</th>
+              </tr>
+            </thead>
+            <tbody id="airports-tbody">
+              <tr><td colspan="4" class="c-dim" style="text-align:center;padding:12px">Scanning airspace…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- LiveUAMap -->
+      <div class="panel panel-liveuamap">
+        <div class="panel-header ph-yellow">
+          ▸ LiveUAMap — Iran Events Feed
+          <span id="lum-meta" style="font-size:10px;font-weight:normal;color:var(--dim)"></span>
+        </div>
+        <div class="panel-body" id="lum-body">
+          <div class="c-dim" style="padding:20px;text-align:center">Initialising feed…</div>
+        </div>
+      </div>
+
+    </div><!-- /.left-col -->
+
+    <!-- RIGHT COLUMN -->
+    <div class="right-col">
+
+      <!-- Raw Telegram Firehose -->
+      <div class="panel panel-raw">
+        <div class="panel-header ph-cyan">
+          ▸ Raw Telegram Firehose (Translated)
+          <span id="tg-badge"></span>
+        </div>
+        <div class="panel-body">
+          <div class="log-list" id="raw-logs">
+            <div class="c-dim" style="padding:10px;text-align:center">Waiting for Telegram…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Keyword Alerts -->
+      <div class="panel panel-keywords">
+        <div class="panel-header ph-green">
+          ▸ Keyword Alerts — Telegram &amp; Parseek
+        </div>
+        <div class="panel-body">
+          <div class="log-list" id="keyword-logs">
+            <div class="c-dim" style="padding:10px;text-align:center">Monitoring feeds…</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /.right-col -->
+  </div><!-- /.grid -->
+
+  <footer>
+    <span id="footer-left">Avg window: Jan 1 – Feb 25 2026 &nbsp;·&nbsp; <a href="/data" style="color:var(--dim)">raw JSON</a></span>
+    <span>Auto-refresh every 10s</span>
+  </footer>
+</div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────
+const DISPLAY_ORDER = [
+  ["CRUDE",    "WTI Crude"],
+  ["CRUDE",    "Brent Crude"],
+  ["CRUDE",    "Dubai/Oman Crude"],
+  ["JET",      "Jet Fuel (Kero)"],
+  ["MARITIME", "VLSFO 0.5%"],
+  ["MARITIME", "MGO 0.5%"],
+  ["MARITIME", "HFO 380 cSt"],
+  ["AUTO",     "RBOB Gasoline"],
+  ["AUTO",     "ULSD Diesel"],
+  ["AUTO",     "Heating Oil No.2"],
+];
+
+const FIXED_AVGS = {
+  "WTI Crude": 63.50, "Brent Crude": 69.00, "Dubai/Oman Crude": 67.50,
+  "Jet Fuel (Kero)": 2.15, "VLSFO 0.5%": 500.00, "MGO 0.5%": 598.00,
+  "HFO 380 cSt": 402.10, "RBOB Gasoline": 2.05,
+  "ULSD Diesel": 2.38, "Heating Oil No.2": 2.23,
+};
+
+// ── Tehran time ───────────────────────────────────────────────
+function getTehranTime() {
+  return new Date().toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Tehran', hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+}
+setInterval(() => {
+  const el = document.getElementById('hdr-tehran');
+  if (el) el.textContent = getTehranTime();
+}, 1000);
+
+// ── Helpers ───────────────────────────────────────────────────
+function badge(text, cls) {
+  return `<span class="badge badge-${cls}">${text}</span>`;
+}
+
+function fmtSpot(spot, avg, lbl) {
+  if (spot === undefined || spot === null) return '<span class="c-dim">—</span>';
+  const s = spot.toFixed(lbl.includes('bbl') || lbl.includes('mt') ? 2 : 3);
+  if (!avg) return `<span class="c-cyan">${s}</span>`;
+  const pct = (spot - avg) / avg * 100;
+  if (pct > 2)  return `<span class="c-red bold">${s}</span>`;
+  if (pct < -2) return `<span class="c-green bold">${s}</span>`;
+  return `<span class="c-yellow">${s}</span>`;
+}
+
+function fmtVsAvg(spot, avg) {
+  if (!avg || spot === undefined) return '<span class="c-dim">—</span>';
+  const pct = (spot - avg) / avg * 100;
+  const sign = pct >= 0 ? '+' : '';
+  if (pct > 2)  return `<span class="c-red">${sign}${pct.toFixed(1)}%</span>`;
+  if (pct < -2) return `<span class="c-green">${sign}${pct.toFixed(1)}%</span>`;
+  return `<span class="c-yellow">${sign}${pct.toFixed(1)}%</span>`;
+}
+
+// ── Section: Fuel prices ──────────────────────────────────────
+function renderFuel(fpcData, sources) {
+  document.getElementById('fpc-sources').textContent =
+    sources.length ? `Sources: ${sources.join(', ')}` : '';
+
+  let rows = '';
+  let prevCat = null;
+
+  for (const [cat, lbl] of DISPLAY_ORDER) {
+    if (prevCat !== null && cat !== prevCat) {
+      rows += `<tr class="cat-sep"><td colspan="7" style="padding:1px 0"></td></tr>`;
+    }
+    prevCat = cat;
+
+    const d = fpcData[lbl];
+    const avg = FIXED_AVGS[lbl];
+
+    if (!d) {
+      rows += `<tr><td class="c-dim">${cat}</td><td class="c-yellow">${lbl}</td>
+               <td colspan="5" class="c-dim">no data</td></tr>`;
+      continue;
+    }
+    if (d.error) {
+      rows += `<tr><td class="c-dim">${cat}</td><td class="c-yellow">${lbl}</td>
+               <td class="c-red" colspan="5">ERR: ${String(d.error).slice(0,20)}</td></tr>`;
+      continue;
+    }
+
+    const spot   = d.spot;
+    const unit   = d.unit_label || '';
+    const asof   = String(d.spot_date || '—').slice(0,10);
+    const avgFmt = avg ? avg.toFixed(2) : '—';
+
+    rows += `<tr>
+      <td class="c-dim">${cat}</td>
+      <td class="c-white">${lbl}</td>
+      <td>${fmtSpot(spot, avg, unit)}</td>
+      <td class="c-dim">${unit}</td>
+      <td class="c-dim">${avgFmt}</td>
+      <td>${fmtVsAvg(spot, avg)}</td>
+      <td class="c-dim">${asof}</td>
+    </tr>`;
+  }
+
+  document.getElementById('fpc-tbody').innerHTML =
+    rows || '<tr><td colspan="7" class="c-dim" style="text-align:center;padding:12px">Waiting…</td></tr>';
+}
+
+// ── Section: Airports ─────────────────────────────────────────
+function renderAirports(airports, adsbStatus) {
+  const badge_el = document.getElementById('adsb-badge');
+  badge_el.innerHTML = adsbStatus === 'LIVE'
+    ? badge('LIVE', 'green') : badge(adsbStatus, 'dim');
+
+  const entries = Object.entries(airports)
+    .filter(([_, d]) => d.ground > 0 || d.outbound > 0 || d.inbound > 0)
+    .sort((a, b) => a[1].country.localeCompare(b[1].country));
+
+  if (!entries.length) {
+    document.getElementById('airports-tbody').innerHTML =
+      '<tr><td colspan="4" class="c-dim" style="text-align:center;padding:8px">Scanning airspace…</td></tr>';
+    return;
+  }
+
+  const rows = entries.map(([iata, d]) => {
+    const name = `${d.country} — ${d.name} (${iata})`;
+    return `<tr>
+      <td class="c-cyan">${name}</td>
+      <td class="c-white">${d.ground}</td>
+      <td class="c-green">${d.outbound}</td>
+      <td class="c-yellow">${d.inbound}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('airports-tbody').innerHTML = rows;
+}
+
+// ── Section: LiveUAMap ────────────────────────────────────────
+function renderLiveuamap(events, meta) {
+  const remaining = Math.max(0, Math.floor((meta.next_update - Date.now() / 1000)));
+  const m = Math.floor(remaining / 60), s = remaining % 60;
+  const timer = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+
+  const statusEl = document.getElementById('lum-meta');
+  const statusTxt = meta.last_status === '200'
+    ? `<span class="c-green">${meta.last_status}</span> (${meta.last_count} rcvd)`
+    : meta.last_status === 'INIT'
+    ? `<span class="c-dim">INIT</span>`
+    : `<span class="c-red">${meta.last_status}</span>`;
+
+  statusEl.innerHTML =
+    `Last: ${meta.last_call} ${statusTxt} · Newest: ${meta.newest_ts} · Next: <span class="c-cyan">${timer}</span>`;
+
+  const body = document.getElementById('lum-body');
+  if (!events.length) {
+    body.innerHTML = '<div class="c-dim" style="padding:16px;text-align:center">No events yet…</div>';
+    return;
+  }
+
+  const et = (ts) => {
+    const d = new Date(parseInt(ts) * 1000);
+    return d.toLocaleTimeString('en-US', { timeZone: 'America/New_York',
+      hour: '2-digit', minute: '2-digit', hour12: false });
+  };
+
+  body.innerHTML = events.map(e => {
+    const ts    = e.timestamp || e.time || 0;
+    const loc   = e.location ? `${e.location}` : (e.lat ? `${e.lat}, ${e.lng}` : 'Unknown');
+    const src   = String(e.source || 'N/A').startsWith('http')
+      ? String(e.source).split('/')[2] : String(e.source || 'N/A').slice(0,15);
+    return `<div class="ev-row">
+      <span class="ev-time">${et(ts)}</span>
+      <span class="ev-text">${e.name || 'Unknown Event'}</span>
+      <span class="ev-loc">${loc}</span>
+      <span class="ev-src">${src}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Section: Telegram raw logs ────────────────────────────────
+function renderRawLogs(logs, tgStatus) {
+  const badge_el = document.getElementById('tg-badge');
+  const cls = tgStatus === 'LISTENING' ? 'green'
+            : tgStatus === 'RECONNECTING' ? 'orange'
+            : tgStatus === 'NO_SESSION' ? 'dim' : 'red';
+  badge_el.innerHTML = badge(tgStatus, cls);
+
+  if (!logs.length) {
+    document.getElementById('raw-logs').innerHTML =
+      `<div class="c-dim" style="padding:10px;text-align:center">${
+        tgStatus === 'NO_SESSION' ? 'No session file — Telegram disabled' : 'Waiting for messages…'
+      }</div>`;
+    return;
+  }
+
+  document.getElementById('raw-logs').innerHTML = logs.map(l =>
+    `<div class="log-entry raw">${l}</div>`
+  ).join('');
+}
+
+// ── Section: Keyword alerts ───────────────────────────────────
+function renderKeywords(logs) {
+  if (!logs.length) {
+    document.getElementById('keyword-logs').innerHTML =
+      '<div class="c-dim" style="padding:10px;text-align:center">Monitoring…</div>';
+    return;
+  }
+
+  // Guess category from text to apply colour class
+  const catClass = (text) => {
+    const t = text.toUpperCase();
+    if (t.includes('URGENT'))   return 'urgent';
+    if (t.includes('TACTICAL')) return 'tactical';
+    if (t.includes('MILITARY')) return 'military';
+    if (t.includes('LOGISTICS'))return 'logistics';
+    if (t.includes('CIVIL'))    return 'civil';
+    if (t.includes('GEOGRAPHIC'))return 'geo';
+    return 'raw';
+  };
+
+  document.getElementById('keyword-logs').innerHTML = logs.map(l =>
+    `<div class="log-entry ${catClass(l)}">${l}</div>`
+  ).join('');
+}
+
+// ── Header status ─────────────────────────────────────────────
+function renderHeader(d) {
+  const net = d.internet === 'ONLINE'
+    ? '<span class="online">ONLINE</span>' : '<span class="offline">OFFLINE</span>';
+  document.getElementById('hdr-internet').innerHTML = `NET: ${net}`;
+
+  const tgCls = d.telegram === 'LISTENING' ? 'online'
+              : d.telegram === 'RECONNECTING' ? 'warn' : 'offline';
+  document.getElementById('hdr-tg').innerHTML =
+    `TG: <span class="${tgCls}">${d.telegram}</span>`;
+
+  const adsbCls = d.adsb_status === 'LIVE' ? 'online' : 'warn';
+  document.getElementById('hdr-adsb').innerHTML =
+    `ADSB: <span class="${adsbCls}">${d.adsb_status}</span>`;
+
+  document.getElementById('hdr-updated').textContent =
+    new Date(d.server_time + 'Z').toLocaleTimeString('en-US',
+      { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// ── Main render ───────────────────────────────────────────────
+function render(d) {
+  renderHeader(d);
+  renderFuel(d.fpc_data || {}, d.fpc_sources || []);
+  renderAirports(d.regional_airports || {}, d.adsb_status);
+  renderLiveuamap(d.liveuamap_events || [], {
+    last_status:  d.liveuamap_last_status,
+    last_call:    d.liveuamap_last_call,
+    last_count:   d.liveuamap_last_count,
+    newest_ts:    d.liveuamap_newest_ts,
+    next_update:  d.next_liveuamap_update,
+  });
+  renderRawLogs(d.raw_tg_logs || [], d.telegram);
+  renderKeywords(d.analysis_logs || []);
+}
+
+// ── Poll every 10 seconds ─────────────────────────────────────
+async function poll() {
+  try {
+    const res = await fetch('/data');
+    render(await res.json());
+  } catch(e) { console.warn('poll failed:', e); }
+  setTimeout(poll, 10_000);
+}
+
+poll();
+</script>
+</body>
+</html>
