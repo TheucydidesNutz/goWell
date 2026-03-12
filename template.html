@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHODAN Intelligence Monitor</title>
+<style>
+  /* ── Reset & base ─────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:        #0d0d0d;
+    --bg2:       #111417;
+    --bg3:       #161b22;
+    --border:    #2a2f3a;
+    --text:      #c9d1d9;
+    --dim:       #484f58;
+    --cyan:      #58a6ff;
+    --green:     #3fb950;
+    --red:       #f85149;
+    --orange:    #e3b341;
+    --yellow:    #d29922;
+    --magenta:   #bc8cff;
+    --white:     #f0f6fc;
+    --font-mono: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    height: 100%;
+  }
+
+  /* ── Layout ───────────────────────────────────────────────── */
+  .page { display: flex; flex-direction: column; height: 100vh; }
+
+  header {
+    background: #1a0000;
+    border-bottom: 2px solid var(--red);
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  header h1 { color: var(--red); font-size: 15px; letter-spacing: 2px; }
+
+  .header-meta { color: var(--dim); font-size: 11px; text-align: right; line-height: 1.6; }
+  .header-meta .status-ok   { color: var(--green);  }
+  .header-meta .status-scan { color: var(--orange); }
+  .header-meta .countdown   { color: var(--cyan);   }
+
+  .sections {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    overflow-y: auto;
+    flex: 1;
+    padding: 8px;
+    gap: 8px;
+  }
+
+  /* ── Section panels ───────────────────────────────────────── */
+  .panel {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 6px 12px;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .panel-header.magenta { color: var(--magenta); background: #15101f; }
+  .panel-header.yellow  { color: var(--yellow);  background: #191300; }
+  .panel-header.cyan    { color: var(--cyan);     background: #0d1520; }
+
+  .panel-body {
+    overflow-x: auto;
+    overflow-y: auto;
+    max-height: 340px;
+  }
+
+  .panel-body.tall { max-height: 420px; }
+
+  /* ── Tables ───────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+
+  th {
+    position: sticky;
+    top: 0;
+    background: var(--bg3);
+    color: var(--dim);
+    font-weight: normal;
+    text-align: right;
+    padding: 5px 10px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    z-index: 1;
+  }
+  th:first-child { text-align: left; }
+
+  td {
+    padding: 4px 10px;
+    text-align: right;
+    border-bottom: 1px solid #1a1f2a;
+    white-space: nowrap;
+    color: var(--text);
+  }
+  td:first-child { text-align: left; }
+
+  tr:hover td { background: #1c2130; }
+
+  .tr-alert td { background: #2a0a0a !important; }
+
+  /* ── Colour helpers ───────────────────────────────────────── */
+  .c-red    { color: var(--red);     }
+  .c-green  { color: var(--green);   }
+  .c-orange { color: var(--orange);  }
+  .c-cyan   { color: var(--cyan);    }
+  .c-yellow { color: var(--yellow);  }
+  .c-mag    { color: var(--magenta); }
+  .c-white  { color: var(--white);   }
+  .c-dim    { color: var(--dim);     }
+  .bold     { font-weight: bold;     }
+
+  /* ── Signal flags ─────────────────────────────────────────── */
+  .flags { display: flex; gap: 3px; }
+  .flag-chip {
+    display: inline-block;
+    font-size: 9.5px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+  }
+  .flag-on  { background: var(--red);    color: #000; }
+  .flag-off { background: #1e2230;       color: var(--dim); }
+
+  /* ── Fusion signal cards ──────────────────────────────────── */
+  .fusion-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 8px;
+    padding: 10px;
+  }
+
+  .signal-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+  }
+
+  .signal-card.firing { border-color: var(--red); background: #1a0a0a; }
+
+  .signal-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+
+  .signal-name { color: var(--magenta); font-size: 11px; font-weight: bold; letter-spacing: 1px; }
+  .signal-short { color: var(--dim); font-size: 10px; }
+  .signal-status-ok    { color: var(--green);  font-size: 11px; }
+  .signal-status-alert { color: var(--red);    font-size: 11px; font-weight: bold; }
+  .signal-desc { color: var(--dim); font-size: 10.5px; margin-top: 4px; }
+  .signal-alerts { margin-top: 6px; }
+  .signal-alert-item { color: var(--orange); font-size: 10.5px; padding: 1px 0; }
+
+  /* ── Footer ───────────────────────────────────────────────── */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 5px 12px;
+    font-size: 10.5px;
+    color: var(--dim);
+    display: flex;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  /* ── Spinner ──────────────────────────────────────────────── */
+  .spinner { display: inline-block; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Alert banner ─────────────────────────────────────────── */
+  #alert-banner {
+    display: none;
+    background: #3a0000;
+    border-bottom: 2px solid var(--red);
+    color: var(--red);
+    text-align: center;
+    padding: 6px;
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ── Header ─────────────────────────────────────────── -->
+  <header>
+    <h1>⬡ SHODAN INTELLIGENCE MONITOR</h1>
+    <div class="header-meta">
+      <span id="last-run">Loading…</span><br>
+      <span id="next-run" class="countdown"></span>
+    </div>
+  </header>
+
+  <!-- ── Alert banner (shows when total_alerts > 4) ────── -->
+  <div id="alert-banner"></div>
+
+  <div class="sections">
+
+    <!-- SECTION 1: Country Table -->
+    <div class="panel">
+      <div class="panel-header magenta">
+        ▸ Section 1 — All Nodes &amp; ICS Exposure · All 15 Countries
+        <span id="s1-summary" class="c-dim" style="font-size:10px;font-weight:normal"></span>
+      </div>
+      <div class="panel-body">
+        <table id="country-table">
+          <thead>
+            <tr>
+              <th style="text-align:left">Country</th>
+              <th>All Nodes</th>
+              <th>Δ</th>
+              <th>ICS Total</th>
+              <th>Modbus</th>
+              <th>DNP3</th>
+              <th>S7</th>
+              <th>BACnet</th>
+              <th>E/IP</th>
+              <th>IEC-104</th>
+              <th>Signals</th>
+            </tr>
+          </thead>
+          <tbody id="country-tbody">
+            <tr><td colspan="11" class="c-dim" style="text-align:center;padding:20px">
+              Waiting for first scan…
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SECTION 2: City Tables (one sub-panel per country) -->
+    <div class="panel">
+      <div class="panel-header yellow">
+        ▸ Section 2 — City-Level Intelligence · Iran · Israel · Pakistan
+      </div>
+
+      <!-- Iran -->
+      <div style="border-bottom:1px solid var(--border)">
+        <div style="padding:5px 12px;font-size:10px;color:var(--yellow);background:#191300;letter-spacing:1px">
+          IRAN — Strategic Sites &amp; Urban Centres
+        </div>
+        <div class="panel-body tall">
+          <table id="city-table-IR">
+            <thead>
+              <tr>
+                <th style="text-align:left">City / Site</th>
+                <th>⊕</th>
+                <th>Nodes</th><th>Δ</th>
+                <th>ICS</th><th>Δ ICS</th>
+                <th>Modbus</th><th>DNP3</th><th>S7</th>
+                <th>BACnet</th><th>E/IP</th><th>IEC-104</th>
+                <th>VPN</th>
+              </tr>
+            </thead>
+            <tbody id="city-tbody-IR">
+              <tr><td colspan="13" class="c-dim" style="text-align:center;padding:12px">Scanning…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Israel -->
+      <div style="border-bottom:1px solid var(--border)">
+        <div style="padding:5px 12px;font-size:10px;color:var(--yellow);background:#191300;letter-spacing:1px">
+          ISRAEL
+        </div>
+        <div class="panel-body">
+          <table id="city-table-IL">
+            <thead>
+              <tr>
+                <th style="text-align:left">City</th>
+                <th>Nodes</th><th>Δ</th>
+                <th>ICS</th><th>Δ ICS</th>
+                <th>Modbus</th><th>DNP3</th><th>S7</th>
+                <th>BACnet</th><th>E/IP</th><th>IEC-104</th>
+                <th>VPN</th>
+              </tr>
+            </thead>
+            <tbody id="city-tbody-IL">
+              <tr><td colspan="12" class="c-dim" style="text-align:center;padding:12px">Scanning…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Pakistan -->
+      <div>
+        <div style="padding:5px 12px;font-size:10px;color:var(--yellow);background:#191300;letter-spacing:1px">
+          PAKISTAN
+        </div>
+        <div class="panel-body">
+          <table id="city-table-PK">
+            <thead>
+              <tr>
+                <th style="text-align:left">City</th>
+                <th>Nodes</th><th>Δ</th>
+                <th>ICS</th><th>Δ ICS</th>
+                <th>Modbus</th><th>DNP3</th><th>S7</th>
+                <th>BACnet</th><th>E/IP</th><th>IEC-104</th>
+                <th>VPN</th>
+              </tr>
+            </thead>
+            <tbody id="city-tbody-PK">
+              <tr><td colspan="12" class="c-dim" style="text-align:center;padding:12px">Scanning…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 3: Fusion Signals -->
+    <div class="panel">
+      <div class="panel-header cyan">
+        ▸ Section 3 — Fusion Signal Detail
+        <span id="s3-summary" style="font-size:10px;font-weight:normal"></span>
+      </div>
+      <div class="panel-body" style="max-height:none">
+        <div class="fusion-grid" id="fusion-grid">
+          <div class="c-dim" style="padding:20px;grid-column:1/-1;text-align:center">
+            Waiting for first scan…
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.sections -->
+
+  <footer>
+    <span id="footer-totals"></span>
+    <span>Auto-refresh every 30s · <a href="/data" style="color:var(--dim)">raw JSON</a></span>
+  </footer>
+</div>
+
+<script>
+// ── Constants ─────────────────────────────────────────────────
+const SIGNAL_SHORTS = [
+  ["BLACKOUT_WATCH",   "BW"],
+  ["CERT_CHURN",       "CC"],
+  ["PORT_SHADOW",      "PS"],
+  ["TELECOM_PULSE",    "TP"],
+  ["VPN_SURGE",        "VS"],
+  ["WEBCAM_BLINK",     "WB"],
+  ["GRID_FINGERPRINT", "GF"],
+  ["DARK_MIRROR",      "DM"],
+];
+
+const SIGNAL_DESC = {
+  BLACKOUT_WATCH:   "ICS/SCADA disappearance near strike zones (>20% drop)",
+  CERT_CHURN:       "SSL cert volume spike — emergency re-keying or replacement",
+  PORT_SHADOW:      "Novel/surging ports on gov & military ASNs",
+  TELECOM_PULSE:    "Country-wide host Δ — derived from all-nodes scan",
+  VPN_SURGE:        "VPN endpoint growth (>25%) — comms hardening signal",
+  WEBCAM_BLINK:     "Public camera drop (>10%) after kinetic events",
+  GRID_FINGERPRINT: "Power grid protocol (Modbus/DNP3/IEC-104) exposure Δ",
+  DARK_MIRROR:      "Top org host-count vanishing >30%",
+};
+
+const COUNTRY_NAMES = {
+  IR:"Iran", IQ:"Iraq", TR:"Turkey", AF:"Afghanistan", PK:"Pakistan",
+  TM:"Turkmenistan", AZ:"Azerbaijan", AM:"Armenia", CY:"Cyprus",
+  IL:"Israel", SY:"Syria", SA:"Saudi Arabia", KW:"Kuwait", AE:"UAE", LB:"Lebanon",
+};
+
+// ── Helpers ───────────────────────────────────────────────────
+function fmt(n) {
+  if (n === null || n === undefined) return '<span class="c-dim">—</span>';
+  return Number(n).toLocaleString();
+}
+
+function fmtDelta(d) {
+  if (d === null || d === undefined) return '<span class="c-dim">—</span>';
+  if (d < -10) return `<span class="c-red bold">${d > 0 ? '+' : ''}${d.toLocaleString()}</span>`;
+  if (d < 0)   return `<span class="c-orange">${d.toLocaleString()}</span>`;
+  if (d > 10)  return `<span class="c-green">+${d.toLocaleString()}</span>`;
+  return `<span class="c-dim">${d > 0 ? '+' : ''}${d.toLocaleString()}</span>`;
+}
+
+function fmtIcs(v) {
+  if (!v) return '<span class="c-dim">—</span>';
+  return `<span class="c-red">${Number(v).toLocaleString()}</span>`;
+}
+
+function fmtCountNode(v) {
+  if (!v) return '<span class="c-dim">0</span>';
+  return `<span class="c-cyan">${Number(v).toLocaleString()}</span>`;
+}
+
+function buildSignalIndex(fusion, allNodes) {
+  const index = {};
+  for (const [sigName, short] of SIGNAL_SHORTS) {
+    const alerts = (fusion[sigName] || {}).alerts || [];
+    for (let ak of alerts) {
+      ak = String(ak);
+      let iso = null;
+      if (ak.length === 2 && ak === ak.toUpperCase()) {
+        iso = ak;
+      } else if (ak.includes('_')) {
+        const prefix = ak.split('_')[0];
+        if (prefix.length === 2 && prefix === prefix.toUpperCase()) iso = prefix;
+      }
+      if (iso) {
+        if (!index[iso]) index[iso] = new Set();
+        index[iso].add(short);
+      }
+    }
+  }
+  // TELECOM_PULSE from allNodes direction
+  for (const [iso, an] of Object.entries(allNodes || {})) {
+    if (an.direction) {
+      if (!index[iso]) index[iso] = new Set();
+      index[iso].add('TP');
+    }
+  }
+  return index;
+}
+
+function renderFlags(iso, index) {
+  const fired = index[iso] || new Set();
+  return `<div class="flags">${
+    SIGNAL_SHORTS.map(([_, short]) =>
+      `<span class="flag-chip ${fired.has(short) ? 'flag-on' : 'flag-off'}">${short}</span>`
+    ).join('')
+  }</div>`;
+}
+
+// ── Section 1: Country table ──────────────────────────────────
+function renderCountryTable(allNodes, icsNodes, sigIndex) {
+  const isos = Object.keys(allNodes || {}).sort();
+  if (!isos.length) return;
+
+  let totalNodes = 0, totalIcs = 0;
+  const rows = isos.map(iso => {
+    const an = allNodes[iso] || {};
+    const ic = icsNodes[iso] || {};
+    const p  = ic.protocols || {};
+    const count  = an.count || 0;
+    const icsT   = ic.total_ics || 0;
+    totalNodes += count;
+    totalIcs   += icsT;
+
+    const isAlert = icsT > 0 && (ic.any_alert || an.direction);
+    return `<tr class="${isAlert ? 'tr-alert' : ''}">
+      <td class="c-white bold">${COUNTRY_NAMES[iso] || iso}</td>
+      <td>${fmtCountNode(count)}</td>
+      <td>${fmtDelta(an.delta)}</td>
+      <td>${fmtIcs(icsT)}</td>
+      <td>${fmtIcs((p.Modbus  || {}).count)}</td>
+      <td>${fmtIcs((p.DNP3   || {}).count)}</td>
+      <td>${fmtIcs((p.S7     || {}).count)}</td>
+      <td>${fmtIcs((p.BACnet || {}).count)}</td>
+      <td>${fmtIcs((p['E/IP']   || {}).count)}</td>
+      <td>${fmtIcs((p['IEC-104']|| {}).count)}</td>
+      <td>${renderFlags(iso, sigIndex)}</td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('country-tbody').innerHTML = rows;
+  document.getElementById('s1-summary').textContent =
+    `${totalNodes.toLocaleString()} nodes  ·  ${totalIcs.toLocaleString()} ICS exposed`;
+}
+
+// ── Section 2: City tables ─────────────────────────────────────
+function renderCityTable(iso, cityData) {
+  const tbodyId = `city-tbody-${iso}`;
+  const tbody = document.getElementById(tbodyId);
+  if (!tbody || !cityData) return;
+
+  const rows = Object.entries(cityData).map(([city, cd]) => {
+    const p   = cd.ics_proto || {};
+    const geo = cd.geo ? '<span class="c-cyan" title="geo-radius query">⊕</span>'
+                       : '<span class="c-dim">·</span>';
+    const alert = cd.alert ? 'tr-alert' : '';
+
+    // Iran table has geo column
+    const geoCol = iso === 'IR' ? `<td style="text-align:center">${geo}</td>` : '';
+
+    return `<tr class="${alert}">
+      <td class="c-white">${cd.alert ? '<span class="c-red bold">!</span> ' : '<span class="c-dim">· </span>'}${city}</td>
+      ${geoCol}
+      <td>${fmtCountNode(cd.total)}</td>
+      <td>${fmtDelta(cd.delta_total)}</td>
+      <td>${fmtIcs(cd.ics_total)}</td>
+      <td>${fmtDelta(cd.delta_ics)}</td>
+      <td>${fmtIcs(p.Modbus)}</td>
+      <td>${fmtIcs(p.DNP3)}</td>
+      <td>${fmtIcs(p.S7)}</td>
+      <td>${fmtIcs(p.BACnet)}</td>
+      <td>${fmtIcs(p['E/IP'])}</td>
+      <td>${fmtIcs(p['IEC-104'])}</td>
+      <td><span class="c-yellow">${cd.vpn_total ? cd.vpn_total.toLocaleString() : '—'}</span></td>
+    </tr>`;
+  }).join('');
+
+  tbody.innerHTML = rows || '<tr><td colspan="13" class="c-dim" style="text-align:center;padding:8px">No data</td></tr>';
+}
+
+// ── Section 3: Fusion signals ──────────────────────────────────
+function renderFusion(fusion, allNodes) {
+  const grid = document.getElementById('fusion-grid');
+  let totalAlerts = 0;
+
+  const cards = SIGNAL_SHORTS.map(([sigName, short]) => {
+    const sig    = fusion[sigName] || {};
+    let alerts   = sig.alerts || [];
+
+    // TELECOM_PULSE: derive from allNodes
+    if (sigName === 'TELECOM_PULSE') {
+      alerts = Object.entries(allNodes || {})
+        .filter(([_, an]) => an.direction)
+        .map(([iso, an]) => `${iso}(${an.direction})`);
+    }
+
+    totalAlerts += alerts.length;
+    const firing = alerts.length > 0;
+
+    const alertItems = alerts.slice(0, 3).map(a =>
+      `<div class="signal-alert-item">↳ ${a}</div>`
+    ).join('');
+
+    const more = alerts.length > 3
+      ? `<div class="signal-alert-item c-dim">… +${alerts.length - 3} more</div>` : '';
+
+    return `<div class="signal-card ${firing ? 'firing' : ''}">
+      <div class="signal-card-header">
+        <span class="signal-name">[${short}] ${sigName}</span>
+        ${firing
+          ? `<span class="signal-status-alert">⚠ ${alerts.length} ALERT${alerts.length > 1 ? 'S' : ''}</span>`
+          : `<span class="signal-status-ok">✓ NOMINAL</span>`}
+      </div>
+      <div class="signal-desc">${SIGNAL_DESC[sigName] || ''}</div>
+      ${firing ? `<div class="signal-alerts">${alertItems}${more}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  grid.innerHTML = cards;
+
+  const s3 = document.getElementById('s3-summary');
+  if (totalAlerts > 4)      s3.innerHTML = `<span class="c-red bold">${totalAlerts} ACTIVE FLAGS</span>`;
+  else if (totalAlerts > 0) s3.innerHTML = `<span class="c-orange">${totalAlerts} active flags</span>`;
+  else                      s3.innerHTML = `<span class="c-green">All nominal</span>`;
+
+  // Alert banner
+  const banner = document.getElementById('alert-banner');
+  if (totalAlerts > 4) {
+    banner.style.display = 'block';
+    banner.textContent   = `⚠  ${totalAlerts} ACTIVE SIGNAL FLAGS — REVIEW REQUIRED`;
+  } else {
+    banner.style.display = 'none';
+  }
+
+  return totalAlerts;
+}
+
+// ── Footer totals ──────────────────────────────────────────────
+function renderFooter(signals) {
+  const allNodes  = signals.all_nodes  || {};
+  const icsNodes  = signals.ics_nodes  || {};
+  const cities    = signals.cities     || {};
+
+  const totalNod = Object.values(allNodes).reduce((s, v) => s + (v.count || 0), 0);
+  const totalIcs = Object.values(icsNodes).reduce((s, v) => s + (v.total_ics || 0), 0);
+  const cityIcs  = Object.values(cities).reduce((s, iso) =>
+    s + Object.values(iso).reduce((s2, cd) => s2 + (cd.ics_total || 0), 0), 0);
+  const nGeo = Object.values(cities).reduce((s, iso) =>
+    s + Object.values(iso).filter(cd => cd.geo).length, 0);
+
+  document.getElementById('footer-totals').textContent =
+    `Monitored: ${totalNod.toLocaleString()} nodes  ·  Country ICS: ${totalIcs.toLocaleString()}  ·  City ICS: ${cityIcs.toLocaleString()}  ·  Geo-queried: ${nGeo}`;
+}
+
+// ── Main render ────────────────────────────────────────────────
+function render(payload) {
+  const { last_run, scan_running, next_run_secs, signals } = payload;
+
+  // Header
+  const spinEl = scan_running
+    ? ' <span class="spinner c-orange">↻</span> <span class="c-orange">Scanning…</span>' : '';
+  document.getElementById('last-run').innerHTML =
+    `Last scan: <span class="status-ok">${last_run}</span>${spinEl}`;
+
+  const m = Math.floor(next_run_secs / 60);
+  const s = next_run_secs % 60;
+  document.getElementById('next-run').innerHTML =
+    scan_running
+      ? '<span class="c-orange">Scan in progress</span>'
+      : `Next: <span class="countdown">${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</span>`;
+
+  if (!signals || !signals.all_nodes) return;
+
+  const allNodes = signals.all_nodes  || {};
+  const icsNodes = signals.ics_nodes  || {};
+  const fusion   = signals.fusion     || {};
+  const cities   = signals.cities     || {};
+
+  const sigIndex = buildSignalIndex(fusion, allNodes);
+
+  renderCountryTable(allNodes, icsNodes, sigIndex);
+
+  for (const iso of ['IR', 'IL', 'PK']) {
+    renderCityTable(iso, cities[iso]);
+  }
+
+  renderFusion(fusion, allNodes);
+  renderFooter(signals);
+}
+
+// ── Polling ────────────────────────────────────────────────────
+let pollTimer = null;
+
+async function poll() {
+  try {
+    const res  = await fetch('/data');
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    console.warn('Poll failed:', e);
+  }
+  pollTimer = setTimeout(poll, 30_000);
+}
+
+// Countdown tick (every second, no server call)
+setInterval(() => {
+  const el = document.getElementById('next-run');
+  if (!el) return;
+  const m = el.querySelector('.countdown');
+  if (!m) return;
+  const [mm, ss] = m.textContent.split(':').map(Number);
+  const total = mm * 60 + ss - 1;
+  if (total <= 0) return;
+  const nm = Math.floor(total / 60);
+  const ns = total % 60;
+  m.textContent = `${String(nm).padStart(2,'0')}:${String(ns).padStart(2,'0')}`;
+}, 1000);
+
+poll();   // kick off immediately
+</script>
+</body>
+</html>
